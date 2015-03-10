@@ -2,6 +2,7 @@
 @GrabConfig(systemClassLoader = true)
 import groovy.transform.CompileStatic
 import groovy.sql.Sql
+import groovy.xml.MarkupBuilder
 
 class GStatic {
 
@@ -12,13 +13,12 @@ class GStatic {
         println "${name} finished in ${endTime}ms"
     }
 
-    Sql sql = Sql.newInstance("jdbc:mysql://localhost:3306/test_data", "root", "sriq@", "com.mysql.jdbc.Driver")
-
     static main(args) {
-        new GStatic().run()
+        Sql sql = Sql.newInstance("jdbc:mysql://localhost:3306/test_data", "root", "sriq@", "com.mysql.jdbc.Driver")
+        new GStatic().run(sql)
     }
 
-    void clearTables() {
+    void clearTables(Sql sql) {
         sql.withTransaction {[
             "SET FOREIGN_KEY_CHECKS = 0",
             "TRUNCATE TABLE contract",
@@ -74,7 +74,46 @@ class GStatic {
         """, c)
     }
 
-    def generateData(data) {
+    @CompileStatic
+    List getContracts(Sql sql) {
+        sql.rows("SELECT * FROM contract")
+    }
+
+    String buildNode(StringWriter sw, MarkupBuilder mb, String name, Map m) {
+        sw.getBuffer().setLength(0)
+        mb."${name}" { m.each{ k, v -> "${k}" "${v}" } }
+        sw
+    }
+
+    @CompileStatic
+    List getInvoices(Sql sql) {
+        sql.rows("SELECT * FROM invoice")
+    }
+
+    Closure groupByInvoiceId = {li -> li.invoice_id}
+    @CompileStatic
+    Map<Object, List> getLineItems(Sql sql) {
+        sql.rows("SELECT * FROM line_item").groupBy(groupByInvoiceId)
+    }
+
+    void assembleData(Sql sql) {
+        StringWriter sw = new StringWriter()
+        MarkupBuilder mb = new MarkupBuilder(sw)
+        println getLineItems(sql).size()
+        //def lineItems = getLineItems(sql)
+        //.collect{[invoice_id: it.invoice_id, xml: buildNode(sw, mb, "lineItem", it)]}
+        //.groupBy{it.invoice_id}.collect{k, v -> v.collect{d->it.xml}
+        //.collect{k, v -> [invoice_lineItems: xml: v.collect{d->d.xml}.join('')]}
+        //println lineItems.first()
+
+        //def invoices = getInvoices(sql)
+        //.collect{[id: it.id, contract_id: it.contract_id, xml: buildNode(sw, mb, 'invoice', it)]}
+        //invoices.each{it.lineItems = lineItems[
+        //def contracts = getContracts(sql)
+        //.collect{[id: it.id, xml: buildNode(sw, mb, 'contract', it)]}
+    }
+
+    def generateData(Sql sql) {
         sql.withTransaction {
             perfExec("generateContractData", {->
                 generateContractData(sql, { stmt -> generateDates(30).each{ d -> stmt.addBatch([d])}})
@@ -90,12 +129,15 @@ class GStatic {
         }
     }
 
-    def run() {
+    def run(Sql sql) {
         perfExec("clearTables", {->
-            clearTables()
+            clearTables(sql)
         })
         perfExec("generateData", {->
-            generateData()
+            generateData(sql)
+        })
+        perfExec("assembleData", {->
+            assembleData(sql)
         })
     }
 
